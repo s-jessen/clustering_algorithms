@@ -18,7 +18,7 @@ K-means is one of the most widely used clustering methods, known for its simplic
 
 We can estimate the optimal number of clusters using the silhouette score:
 
-```{r}
+```r
 set.seed(123)
 
 #Create function to retrieve average silhouette score
@@ -44,7 +44,7 @@ K-means clustering suggests the presence of three distinct clusters as the best 
 
 We run the model with three clusters, and visualize the cluster assignments and silhouette scores:
 
-```{r}
+```r
 set.seed(123)
 
 #df is our dataset
@@ -87,7 +87,7 @@ Expectation Maximization clustering, as implemented in Mclust package, fits a mi
 
 The optimal number of clusters is again estimated via silhouette scores:
 
-```{r}
+```r
 em_long_results <- list()
 for (k in 2:10){ 
   
@@ -118,7 +118,7 @@ Much like k-means, EM-clustering suggests that three distinct clusters is the op
 
 Re-running with three clusters:
 
-```{r}
+```r
 #Re run model with the optimal cluster number
 em_model <- Mclust(df, G = 3) 
 
@@ -173,7 +173,7 @@ Unlike k-means or EM, DBSCAN doesn’t require specifying the number of clusters
 
 For DBSCAN we will use the dbscan R package and we will perform a grid search with a double for loop:
 
-```{r}
+```r
 set.seed(123)
 
 #Perform grid search
@@ -237,7 +237,7 @@ Recall how we identified two factors preventing DBSCAN to identify the crescent 
 
 Let's try, for learnings sake, to remove these factors by increasing the density of the crescent shape and removing a few data points between the right most spherical cluster and the crescent shape.
 
-```{r}
+```r
 set.seed(123)
 
 #Add jitter to existing class 1 points
