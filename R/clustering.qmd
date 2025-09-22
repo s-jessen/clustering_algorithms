@@ -1,0 +1,350 @@
+
+```{r, include = F}
+library(tidyverse)
+library(here)
+library(cluster)
+library(mclust)
+library(dbscan)
+library(patchwork)
+
+source(here::here('R/setup.R'))
+```
+
+```{r}
+df_with_classes <- read.table(here::here('data-raw/pathbased.txt')) %>% 
+  dplyr::mutate(V3 = as.character(V3))
+
+names(df_with_classes) <- c("x", "y", "class")
+
+#Separate classes from data frame
+classes <- df_with_classes[,3]
+
+df <- df_with_classes[,1:2]
+```
+
+Visualize data set with true classes
+```{r}
+class_colors <- c(`0` = "gray",
+                      `1` = "#006ea1",
+                      `2` = "#bc5090",
+                      `3` = "#ffa600", 
+                      `4` = "#ff7c43",
+                      `5` = "#f95d6a",
+                      `6` = "#d45087",
+                      `7` = "#665191",
+                      `8` = "#2f4b7c")
+
+ggplot(df_with_classes, aes(x = x, y = y, color = class))+
+  geom_point(size = 3)+
+  scale_color_manual(values = class_colors)+
+  theme(
+    aspect.ratio = 1
+  )
+
+ggsave(here::here('data/figures/1_initial_plot.svg'), width = 130, height = 100, units = "mm")
+```
+
+# K-means classification (Lloyd/Forgy)
+Determine optimal number of clusters
+```{r}
+set.seed(123)
+
+#Create function to retrieve average silhouette score
+silhouette_score <- function(k){
+  km <- kmeans(df, centers = k, algorithm = "Lloyd", iter.max = 100, nstart=25)
+  ss <- cluster::silhouette(km$cluster, dist(df))
+  mean(ss[, 3])
+}
+
+#Number of k to iterate over
+k <- 2:10
+
+#Apply silhouette score function to every element of k
+avg_sil <- purrr::map_vec(k, silhouette_score)
+
+#Plot
+svg(here::here('data/figures/2_k_means_optimal_k_number.svg'), width = 5, height = 4)
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette Scores', frame=FALSE)
+dev.off()
+```
+
+K-means clustering
+```{r}
+set.seed(123)
+
+kmeans_result <- kmeans(df, centers = 3)
+
+#Many incorrect
+table(Cluster = kmeans_result$cluster, TrueClass = df_with_classes$class)
+
+#New dataframe with results and true classifications
+df_k_means_comparison <- df_with_classes %>% 
+  dplyr::mutate(k_means = as.factor(kmeans_result$cluster)) %>% 
+  dplyr::mutate(silhouette = cluster::silhouette(kmeans_result$cluster, dist(df))[,3]) %>% 
+  dplyr::mutate(classification = ifelse(class == k_means, "Correct", "Incorrect"))
+
+#Show with centers and silhouette scores
+ggplot(df_k_means_comparison, aes(x = x, y = y))+
+  geom_point(aes(color = k_means, alpha = silhouette), shape = 16)+
+  geom_point(data = kmeans_result$centers, 
+             aes(x = x, y = y, 
+                 fill = row.names(kmeans_result$centers)),
+             size = 8,
+             shape = 21,
+             stroke = 0.25)+
+  scale_color_manual(values = class_colors,
+                     name = "Cluster\nassignment")+
+  scale_fill_manual(values = class_colors,
+                    name = "Cluster centers")+
+  scale_alpha(
+    range = c(0.1, 0.7),
+    guide = guide_legend(nrow = 1),
+    name = "Silhouette score")+
+  guides(alpha = guide_legend(
+    override.aes = list(color = "black", fill = "white")))
+
+ggsave(here::here('data/figures/3_k_means_assignment_w_silhouette.svg'), width = 150, height = 100, units = "mm")
+```
+
+# EM-clustering
+```{r}
+em_long_results <- list()
+for (k in 2:10){ 
+  
+  em_model <- mclust::Mclust(df, G = k)
+  
+  df_temp <- tibble(
+    id = 1:nrow(df),
+    true_class = classes,
+    algorithm = "EM-clustering",
+    k = rep(k, nrow(df)),
+    silhouette = silhouette(em_model$classification, dist(df))[,3],
+    classification = em_model$classification)
+    
+    em_long_results[[as.character(k)]] <- df_temp
+}
+
+#Combine em results
+em_results <- dplyr::bind_rows(em_long_results)
+
+#Optimal number of clusters
+em_results %>% 
+  dplyr::group_by(k) %>% 
+  dplyr::summarize(silhouette = mean(silhouette), .groups = "drop") %>% 
+  ggplot(aes(x = k, y = silhouette))+
+    geom_line()+
+    geom_point(shape = 1, size = 2, stroke = 1, color = "white")+
+    scale_color_viridis_d(end = 0.9)+
+    labs(x = "Number of Clusters",
+        y = "Mean Silhouette Score")
+
+#Re run model with the optimal cluster number
+em_model <- Mclust(df, G = 3) 
+
+#Compute silhouette scores
+em_results_k3 <- data.frame(x = df$x,
+                            y = df$y,
+                            classification = as.factor(em_model$classification),
+                            silhouette = cluster::silhouette(em_model$classification, dist(df))[,3])
+
+#Extract cluster centers for plotting
+cluster_centers <- t(em_model$parameters$mean) %>% 
+  as.data.frame() %>% 
+  tibble::rowid_to_column("classification") %>% 
+  dplyr::mutate(classification = factor(classification))
+
+em_results_k3 %>%
+  ggplot(aes(x = x, y = y))+
+  geom_point(aes(color = classification, alpha = silhouette), shape = 16)+
+  geom_point(data = cluster_centers, 
+             aes(x = x, y = y, 
+                 fill = classification),
+             size = 8,
+             shape = 21,
+             stroke = 0.25)+
+  scale_color_manual(values = class_colors,
+                     name = "Cluster\nassignment")+
+  scale_fill_manual(values = class_colors,
+                    name = "Cluster centers")+
+  scale_alpha(
+    range = c(0.1, 0.7),
+    guide = guide_legend(nrow = 1),
+    name = "Silhouette score")+
+  guides(alpha = guide_legend(
+    override.aes = list(color = "black", fill = "white")))
+
+ggsave(here::here('data/figures/4_em_clustering_assignment_w_silhouette.svg'), width = 130, height = 100, units = "mm")
+```
+
+# DBscan (Can find clusters of arbitrary shape)
+```{r}
+set.seed(123)
+
+#Perform grid search
+dbscan_plot_list <- list()
+
+for (minPts in 3:8){
+  
+  for (eps in seq(1.5, 2, by = 0.1)){
+    
+    db_result <- dbscan::dbscan(df, eps = eps, minPts = minPts)
+    
+    #Collect desired outputs from model
+    db_results <- data.frame(x = df$x,
+                            y = df$y,
+                            classification = as.factor(db_result$cluster))
+    
+    #Plot
+    circle_legend <- data.frame(
+      x = mean(range(df$x)),     #horizontally centered
+      y = min(df$y) - 1,         #a bit below the bottom
+      r = eps                    #set to current eps value
+    )
+    
+    plot <- db_results %>%
+      ggplot(aes(x = x, y = y))+
+      geom_point(aes(color = classification), shape = 16)+
+      scale_color_manual(values = class_colors,
+                         labels = c(`0` = "Noise"),
+                         name = "Cluster\nassignment")+
+      labs(title = paste0("eps = ", eps, ", minPts = ", minPts))+
+      ggforce::geom_circle(data = circle_legend,
+                       aes(x0 = x, y0 = y, r = r),
+                       color = "black", linetype = "dashed",
+                       linewidth = 0.25)
+    
+    dbscan_plot_list[[paste0("eps_", eps, "_minPts_", minPts)]] <- plot
+    
+    ggsave(plot = plot, here::here(paste0('data/figures/DBSCAN/eps_', eps, "_minPts_", minPts,'.svg')), width = 100, height = 75, units = "mm")
+    
+  }
+  
+}
+
+#Plot select figures
+dbscan1 <- dbscan_plot_list[['eps_2_minPts_3']] + theme(legend.position = "none")
+dbscan2 <- dbscan_plot_list[['eps_2_minPts_6']] + theme(legend.position = "none")
+dbscan3 <- dbscan_plot_list[['eps_1.9_minPts_3']] + theme(legend.position = "none")
+dbscan4 <- dbscan_plot_list[['eps_1.9_minPts_6']] + theme(legend.position = "none")
+
+combined_plot <- (dbscan1 | dbscan2 | dbscan3 | dbscan4)+
+  patchwork::plot_annotation(tag_levels = 'a')
+
+ggsave(here::here('data/figures/5_select_dbscans.svg'), width = 200, height = 75, units = "mm")
+
+#Plot all
+for (plot in dbscan_plot_list){
+  print(plot)
+}
+
+```
+
+Make cluster 1 more dense
+```{r}
+set.seed(123)
+
+#Add jitter to existing class 1 points
+cluster_1_points <- df_with_classes %>%
+  dplyr::filter(class == 1) %>%
+  sample_n(200, replace = TRUE) %>% #draw 200 random data points from class 1 samples
+  dplyr::mutate(
+    x = x + rnorm(n(), mean = 0, sd = 0.2),
+    y = y + rnorm(n(), mean = 0, sd = 0.2)
+  )
+
+#Bind to original df
+df_dense <- dplyr::bind_rows(df_with_classes, cluster_1_points)
+
+#Remove points between crescent and right most cluster
+df_dense_filtered <- df_dense %>%
+  filter(!(x >= 28 & x <= 31 & y >= 11 & y <= 19))
+
+#Compare original vs. modified dataset (density)
+density_original <- ggplot(df_with_classes, aes(x = x, y = y)) +
+  stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE) +
+  scale_fill_viridis_c() +
+  coord_fixed()+
+  theme(
+    legend.position = "none"
+  )
+
+plot_original <- ggplot(df_with_classes, aes(x = x, y = y, color = class))+
+  geom_point(size = 1)+
+  scale_color_manual(values = class_colors)+
+  theme(
+    legend.position = "none"
+  )
+
+density_modified <- ggplot(df_dense_filtered, aes(x = x, y = y)) +
+  stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE) +
+  scale_fill_viridis_c() +
+  coord_fixed()+
+  theme(
+    legend.position = "none"
+  )
+
+plot_modified <- ggplot(df_dense_filtered, aes(x = x, y = y, color = class))+
+  geom_point(size = 1)+
+  scale_color_manual(values = class_colors)+
+  theme(
+    legend.position = "none"
+  )
+
+plot <- (plot_original + density_original) / (plot_modified + density_modified) +
+  patchwork::plot_annotation(tag_levels = 'a')
+
+ggsave(here::here('data/figures/6_density_heatmaps.svg'), width = 100, height = 100, units = "mm")
+
+#Run DBSCAN
+df_dense <- df_dense_filtered[,1:ncol(df_dense_filtered)-1]
+dbscan_plot_list <- list()
+
+for (minPts in 3:8){
+  
+  for (eps in seq(1.5, 2, by = 0.1)){
+    
+    db_result <- dbscan::dbscan(df_dense, eps = eps, minPts = minPts)
+    
+    #Collect desired outputs from model
+    db_results <- data.frame(x = df_dense_filtered$x,
+                            y = df_dense_filtered$y,
+                            classification = as.factor(db_result$cluster))
+    
+    #Plot
+    circle_legend <- data.frame(
+      x = mean(range(df_dense_filtered$x)),     #horizontally centered
+      y = min(df_dense_filtered$y) - 1,         #a bit below the bottom
+      r = eps                    #set to current eps value
+    )
+    
+    plot <- db_results %>%
+      ggplot(aes(x = x, y = y))+
+      geom_point(aes(color = classification), shape = 16)+
+      scale_color_manual(values = class_colors,
+                         labels = c(`0` = "Noise"),
+                         name = "cluster assignment")+
+      labs(title = paste0("eps = ", eps, ", minPts = ", minPts))+
+      ggforce::geom_circle(data = circle_legend,
+                       aes(x0 = x, y0 = y, r = r),
+                       color = "white", linetype = "dashed",
+                       linewidth = 0.25)
+    
+    dbscan_plot_list[[paste0("eps_", eps, "_minPts_", minPts)]] <- plot
+    
+    ggsave(plot = plot, here::here(paste0('data/figures/DBSCAN_dense/eps_', eps, "_minPts_", minPts,'.svg')), width = 75, height = 75, units = "mm")
+    
+  }
+  
+}
+
+#Plot select figures
+dbscan1 <- dbscan_plot_list[['eps_2_minPts_3']] + theme(legend.position = "none")
+dbscan2 <- dbscan_plot_list[['eps_2_minPts_6']] + theme(legend.position = "none")
+dbscan3 <- dbscan_plot_list[['eps_1.9_minPts_3']] + theme(legend.position = "none")
+dbscan4 <- dbscan_plot_list[['eps_1.9_minPts_6']] + theme(legend.position = "none")
+
+combined_plot <- (dbscan1 | dbscan2 | dbscan3 | dbscan4)+
+  patchwork::plot_annotation(tag_levels = 'a')
+
+ggsave(here::here('data/figures/7_select_dbscans_dense.svg'), width = 200, height = 75, units = "mm")
+```
