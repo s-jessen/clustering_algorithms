@@ -26,7 +26,12 @@ Visualize data set with true classes
 class_colors <- c(`0` = "gray",
                       `1` = "#006ea1",
                       `2` = "#bc5090",
-                      `3` = "#ffa600")
+                      `3` = "#ffa600", 
+                      `4` = "#ff7c43",
+                      `5` = "#f95d6a",
+                      `6` = "#d45087",
+                      `7` = "#665191",
+                      `8` = "#2f4b7c")
 
 ggplot(df_with_classes, aes(x = x, y = y, color = class))+
   geom_point(size = 3)+
@@ -184,7 +189,7 @@ for (minPts in 3:8){
     circle_legend <- data.frame(
       x = mean(range(df$x)),     #horizontally centered
       y = min(df$y) - 1,         #a bit below the bottom
-      r = eps                    #set to current eps value
+      r = eps                    #set radius to current eps value
     )
     
     plot <- db_results %>%
@@ -217,11 +222,6 @@ combined_plot <- (dbscan1 | dbscan2 | dbscan3 | dbscan4)+
   patchwork::plot_annotation(tag_levels = 'a')
 
 ggsave(here::here('data/figures/6_select_dbscans.svg'), width = 200, height = 75, units = "mm")
-
-#Plot all
-for (plot in dbscan_plot_list){
-  print(plot)
-}
 
 ```
 
