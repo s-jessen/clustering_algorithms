@@ -2,12 +2,12 @@
 theme_set(
   theme(
     panel.background = element_rect(color = "white"),
+    plot.background = element_rect(color = "white"),
     panel.border = element_rect(colour = "black",
                                 fill=NA,
                                 linewidth = 0.25),
     panel.grid.minor=element_blank(),
     panel.grid.major = element_blank(),
-    plot.background = element_blank(),
     axis.line = element_blank(),
     axis.text = element_text(color = "black"),
     text = element_text(size = 10,
